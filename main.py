@@ -8,7 +8,6 @@ from tkinter.ttk import Progressbar
 from tqdm import tqdm
 import logging
 import zipfile
-import time
 
 # Configure logging
 logging.basicConfig(filename='minecraft_launcher.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -22,8 +21,47 @@ def fetch_versions():
         response = requests.get(VERSIONS_URL)
         response.raise_for_status()
         return response.json()
-    except Exception as e:
+    except requests.RequestException as e:
         logging.error(f"Failed to fetch Minecraft versions: {e}")
+        messagebox.showerror("Error", "Failed to fetch Minecraft versions. Please check your internet connection.")
+        return None
+
+# Download a file with progress
+def download_file(url, path, progress_label, progress_bar, file_name):
+    try:
+        response = requests.get(url, stream=True)
+        response.raise_for_status()
+        total_size = int(response.headers.get('content-length', 0))
+
+        # Ensure directory structure exists
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        with open(path, 'wb') as file, tqdm(
+            desc=file_name,
+            total=total_size,
+            unit='B',
+            unit_scale=True,
+            unit_divisor=1024,
+        ) as bar:
+            for data in response.iter_content(chunk_size=8192):
+                file.write(data)
+                bar.update(len(data))
+                if total_size >= 1024 * 1024:
+                    progress_label.config(text=f"Downloading {file_name}: {bar.n / (1024 * 1024):.2f} / {bar.total / (1024 * 1024):.2f} MB")
+                else:
+                    progress_label.config(text=f"Downloading {file_name}: {bar.n / 1024:.2f} / {bar.total / 1024:.2f} KB")
+                root.update()  # Update the tkinter window
+                progress_bar['value'] = (bar.n / total_size) * 100  # Update progress bar value
+
+        # Check if the file extension is .zip and rename it to .jar if necessary
+        if path.endswith('.zip'):
+            new_path = path[:-4] + '.jar'
+            os.rename(path, new_path)
+            return new_path
+        return path
+    except Exception as e:
+        logging.error(f"Failed to download file from {url}: {e}")
+        messagebox.showerror("Error", f"Failed to download {file_name}: {e}")
         return None
 
 # Download a Minecraft version
@@ -81,52 +119,8 @@ def download_version(version_id, progress_label, progress_bar):
                     return version_details
                 except Exception as e:
                     logging.error(f"Failed to download Minecraft version {version_id}: {e}")
+                    messagebox.showerror("Error", f"Failed to download Minecraft version {version_id}: {e}")
     return None
-
-# Download helper
-def download_file(url, path, progress_label, progress_bar, file_name):
-    try:
-        response = requests.get(url, stream=True)
-        response.raise_for_status()
-        total_size = int(response.headers.get('content-length', 0))
-
-        # Ensure directory structure exists
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-
-        with open(path, 'wb') as file, tqdm(
-            desc=file_name,
-            total=total_size,
-            unit='B',
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as bar:
-            for data in response.iter_content(chunk_size=8192):
-                file.write(data)
-                bar.update(len(data))
-                if total_size >= 1024 * 1024:
-                    progress_label.config(text=f"Downloading {file_name}: {bar.n / (1024 * 1024):.2f} / {bar.total / (1024 * 1024):.2f} MB")
-                else:
-                    progress_label.config(text=f"Downloading {file_name}: {bar.n / 1024:.2f} / {bar.total / 1024:.2f} KB")
-                root.update()  # Update the tkinter window
-                progress_bar['value'] = (bar.n / total_size) * 100  # Update progress bar value
-
-        # Check if the file extension is .zip and rename it to .jar if necessary
-        if path.endswith('.zip'):
-            new_path = path[:-4] + '.jar'
-            os.rename(path, new_path)
-            return new_path
-        return path
-    except Exception as e:
-        logging.error(f"Failed to download file from {url}: {e}")
-        return None
-
-# Display Minecraft versions
-def display_versions():
-    versions_data = fetch_versions()
-    if versions_data:
-        versions = versions_data['versions']
-        for version in versions:
-            version_listbox.insert(tk.END, version['id'])
 
 # Launch Minecraft
 def launch_minecraft():
@@ -184,7 +178,8 @@ version_listbox = tk.Listbox(root)
 version_listbox.pack(pady=20, expand=200)
 
 # Fetch and display versions
-display_versions()
+if fetch_versions():
+    display_versions()
 
 # Launch button
 launch_button = tk.Button(root, text="Launch Minecraft", command=launch_minecraft)
@@ -193,7 +188,6 @@ launch_button.pack(pady=20)
 # Progress label
 progress_label = tk.Label(root, text="")
 progress_label.pack(side=tk.BOTTOM, pady=(0, 20))  # Position at the bottom with 5px padding above
-
 
 # Progress bar
 progress_bar = Progressbar(root, orient=tk.HORIZONTAL, length=400, mode='determinate')  # Set width to 400px
