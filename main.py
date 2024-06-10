@@ -122,6 +122,14 @@ def download_version(version_id, progress_label, progress_bar):
                     messagebox.showerror("Error", f"Failed to download Minecraft version {version_id}: {e}")
     return None
 
+# Display Minecraft versions
+def display_versions():
+    versions_data = fetch_versions()
+    if versions_data:
+        versions = versions_data['versions']
+        for version in versions:
+            version_listbox.insert(tk.END, version['id'])
+
 # Launch Minecraft
 def launch_minecraft():
     selected_version = version_listbox.get(tk.ACTIVE)
@@ -178,8 +186,7 @@ version_listbox = tk.Listbox(root)
 version_listbox.pack(pady=20, expand=200)
 
 # Fetch and display versions
-if fetch_versions():
-    display_versions()
+display_versions()
 
 # Launch button
 launch_button = tk.Button(root, text="Launch Minecraft", command=launch_minecraft)
