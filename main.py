@@ -56,15 +56,12 @@ def download_version(version_id, progress_label, progress_bar):
                     natives_path = os.path.join(version_dir, "natives")
 
                     classpath_entries = [jar_path]
-                    joptsimple_found = False  # Flag to track if joptsimple library is found
                     for library in libraries:
                         if 'downloads' in library and 'artifact' in library['downloads']:
                             artifact = library['downloads']['artifact']
                             artifact_path = os.path.join(libraries_path, *artifact['path'].split('/'))
                             download_file(artifact['url'], artifact_path, progress_label, progress_bar, artifact['path'].split('/')[-1])
                             classpath_entries.append(artifact_path)
-                            if "joptsimple" in artifact['path']:
-                                joptsimple_found = True  # Set flag if joptsimple library is found
                         if 'natives' in library['downloads']:
                             natives = library['downloads']['natives']
                             if 'windows' in natives:
@@ -75,11 +72,6 @@ def download_version(version_id, progress_label, progress_bar):
                                     os.makedirs(natives_path)
                                 with zipfile.ZipFile(native_path, 'r') as zip_ref:
                                     zip_ref.extractall(natives_path)
-
-                    # If joptsimple library is not found, add it explicitly
-                    if not joptsimple_found:
-                        joptsimple_path = os.path.join(libraries_path, "net/sf/jopt-simple/jopt-simple/4.6/jopt-simple-4.6.jar")
-                        classpath_entries.append(joptsimple_path)
 
                     # Save classpath entries to a file
                     classpath_file = os.path.join(version_dir, "classpath.txt")
@@ -212,5 +204,3 @@ root.mainloop()
 
 # Log end of script execution
 logging.info("Minecraft Launcher exited")
-
-time.sleep(10)
