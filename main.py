@@ -7,13 +7,13 @@ from tkinter import messagebox, ttk
 from tqdm import tqdm
 import logging
 import zipfile
-import platform
 
 # Configure logging
 logging.basicConfig(filename='minecraft_launcher.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # URL for fetching Minecraft versions
 VERSIONS_URL = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
+LWJGL_DOWNLOAD_URL = "https://github.com/LWJGL/lwjgl3/releases/download/3.3.3/lwjgl.zip"
 
 class MinecraftLauncher:
     def __init__(self, master):
@@ -87,40 +87,29 @@ class MinecraftLauncher:
                         self.master.update()  # Update the tkinter window
                         self.progress_bar['value'] = (bar.n / total_size) * 100  # Update progress bar value
 
-            # Check if the file extension is .zip and rename it to .jar if necessary
-            if path.endswith('.zip'):
-                new_path = path[:-4] + '.jar'
-                os.rename(path, new_path)
-                return new_path
             return path
         except Exception as e:
             logging.error(f"Failed to download file from {url}: {e}")
             messagebox.showerror("Error", f"Failed to download {file_name}: {e}")
             return None
 
-    # Download LWJGL library based on platform
-    def download_lwjgl(self, version_dir):
-        lwjgl_url = None
-        lwjgl_path = None
-        os_name = platform.system().lower()
-
-        if os_name == "windows":
-            lwjgl_url = "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-windows.jar"
-        elif os_name == "linux":
-            lwjgl_url = "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-linux.jar"
-        elif os_name == "darwin":
-            lwjgl_url = "https://libraries.minecraft.net/org/lwjgl/lwjgl/lwjgl-platform/2.9.4-nightly-20150209/lwjgl-platform-2.9.4-nightly-20150209-natives-osx.jar"
-        else:
-            messagebox.showerror("Error", "Unsupported operating system.")
-            return None
-
-        lwjgl_path = os.path.join(version_dir, "natives", "lwjgl64")
-        lwjgl_jar = os.path.join(version_dir, "natives", "lwjgl-platform.jar")
-
-        # Download LWJGL
-        if lwjgl_url:
-            lwjgl_jar = self.download_file(lwjgl_url, lwjgl_jar, "lwjgl-platform.jar")
-
+    # Download LWJGL
+    def download_lwjgl(self):
+        lwjgl_zip_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl.zip")
+        lwjgl_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl")
+        
+        if not os.path.exists(lwjgl_path):
+            lwjgl_zip_url = LWJGL_DOWNLOAD_URL
+            downloaded_file = self.download_file(lwjgl_zip_url, lwjgl_zip_path, "lwjgl.zip")
+            if downloaded_file:
+                try:
+                    with zipfile.ZipFile(downloaded_file, 'r') as zip_ref:
+                        zip_ref.extractall(lwjgl_path)
+                except Exception as e:
+                    logging.error(f"Failed to extract LWJGL: {e}")
+                    messagebox.showerror("Error", f"Failed to extract LWJGL: {e}")
+                    return None
+        
         return lwjgl_path
 
     # Download a Minecraft version
@@ -143,24 +132,34 @@ class MinecraftLauncher:
                         self.download_file(jar_url, jar_path, f"{version_id}.jar")
 
                         json_path = os.path.join(version_dir, f"{version_id}.json")
-                        self.download_file(version_url, json_path, f"{version_id}.json")
+                        with open(json_path, 'w') as f:
+                            json.dump(version_details, f)
 
-                        with open(json_path, 'r') as f:
-                            version_details = json.load(f)
-
-                        libraries = version_details['libraries']
+                        libraries = version_details.get('libraries', [])
                         libraries_path = os.path.join(appdata_path, ".minecraft", "libraries")
                         natives_path = os.path.join(version_dir, "natives")
 
                         classpath_entries = [jar_path]
-                        lwjgl_path = self.download_lwjgl(version_dir)
+                        lwjgl_path = self.download_lwjgl()  # Download LWJGL
 
                         for library in libraries:
-                            if 'downloads' in library and 'artifact' in library['downloads']:
-                                artifact = library['downloads']['artifact']
-                                artifact_path = os.path.join(libraries_path, *artifact['path'].split('/'))
-                                self.download_file(artifact['url'], artifact_path, artifact['path'].split('/')[-1])
-                                classpath_entries.append(artifact_path)
+                            if 'downloads' in library:
+                                artifact = library['downloads'].get('artifact', {})
+                                if 'path' in artifact and 'url' in artifact:
+                                    artifact_path = os.path.join(libraries_path, *artifact['path'].split('/'))
+                                    self.download_file(artifact['url'], artifact_path, artifact['path'].split('/')[-1])
+                                    classpath_entries.append(artifact_path)
+
+                                if 'classifiers' in library:
+                                    natives = library['downloads']['classifiers']
+                                    if 'natives-windows' in natives:
+                                        native = natives['natives-windows']
+                                        native_path = os.path.join(libraries_path, *native['path'].split('/'))
+                                        self.download_file(native['url'], native_path, native['path'].split('/')[-1])
+                                        if not os.path.exists(natives_path):
+                                            os.makedirs(natives_path)
+                                        with zipfile.ZipFile(native_path, 'r') as zip_ref:
+                                            zip_ref.extractall(natives_path)
 
                         # Save classpath entries to a file
                         classpath_file = os.path.join(version_dir, "classpath.txt")
@@ -213,8 +212,15 @@ class MinecraftLauncher:
         username = "username"
         uuid = "uuid"
 
+        # Set java.library.path to include LWJGL natives directory
+        if lwjgl_path:
+            lwjgl_native_path = os.path.join(lwjgl_path, "native")
+            java_library_path = os.pathsep.join([os.environ.get('JAVA_LIBRARY_PATH', ''), lwjgl_native_path])
+        else:
+            java_library_path = os.environ.get('JAVA_LIBRARY_PATH', '')
+
         command = [
-            'java', '-Djava.library.path=' + lwjgl_path, '-cp', f'@{classpath_file}', main_class,
+            'java', f'-Djava.library.path={java_library_path}', '-cp', f'@{classpath_file}', main_class,
             '--accessToken', access_token,
             '--version', selected_version,
             '--username', username,
