@@ -7,13 +7,13 @@ from tkinter import messagebox, ttk
 from tqdm import tqdm
 import logging
 import zipfile
+import sys
 
 # Configure logging
 logging.basicConfig(filename='minecraft_launcher.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # URL for fetching Minecraft versions
 VERSIONS_URL = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
-LWJGL_DOWNLOAD_URL = "https://github.com/LWJGL/lwjgl3/releases/download/3.3.3/lwjgl.zip"
 
 class MinecraftLauncher:
     def __init__(self, master):
@@ -95,24 +95,37 @@ class MinecraftLauncher:
 
     # Download LWJGL
     def download_lwjgl(self):
-        lwjgl_zip_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl.zip")
-        lwjgl_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl")
-        
+        lwjgl_zip_url = "https://altushost-swe.dl.sourceforge.net/project/java-game-lib/Official%20Releases/LWJGL%202.9.3/lwjgl-2.9.3.zip"
+        lwjgl_zip_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl-2.9.3.zip")
+        lwjgl_path = os.path.join(os.path.expanduser("~"), ".minecraft", "lwjgl-2.9.3")
+
         if not os.path.exists(lwjgl_path):
-            lwjgl_zip_url = LWJGL_DOWNLOAD_URL
-            downloaded_file = self.download_file(lwjgl_zip_url, lwjgl_zip_path, "lwjgl.zip")
+            downloaded_file = self.download_file(lwjgl_zip_url, lwjgl_zip_path, "lwjgl-2.9.3.zip")
             if downloaded_file:
                 try:
                     with zipfile.ZipFile(downloaded_file, 'r') as zip_ref:
-                        zip_ref.extractall(lwjgl_path)
+                        zip_ref.extractall(os.path.dirname(lwjgl_path))  # Extract to parent directory to handle nested structure
+                    logging.info(f"Extracted LWJGL to {lwjgl_path}")
+                    print(f"Extracted LWJGL to {lwjgl_path}")  # Print the extracted path
                 except Exception as e:
                     logging.error(f"Failed to extract LWJGL: {e}")
                     messagebox.showerror("Error", f"Failed to extract LWJGL: {e}")
                     return None
-        
-        return lwjgl_path
+        else:
+            logging.info(f"LWJGL already extracted at {lwjgl_path}")
+            print(f"LWJGL already extracted at {lwjgl_path}")  # Print the existing path
 
-    # Download a Minecraft version
+        # Correct path for native libraries
+        natives_dir = os.path.join(lwjgl_path, "lwjgl-2.9.3", "native", "windows")
+        expected_files = ['lwjgl.dll', 'lwjgl64.dll']
+        for file in expected_files:
+            if not os.path.exists(os.path.join(natives_dir, file)):
+                logging.error(f"Missing LWJGL native library: {file}")
+                messagebox.showerror("Error", f"Missing LWJGL native library: {file}")
+                return None
+
+        return natives_dir  # Return the natives directory directly
+
     def download_version(self, version_id):
         versions_data = self.fetch_versions()
         if versions_data:
@@ -137,10 +150,8 @@ class MinecraftLauncher:
 
                         libraries = version_details.get('libraries', [])
                         libraries_path = os.path.join(appdata_path, ".minecraft", "libraries")
-                        natives_path = os.path.join(version_dir, "natives")
 
-                        classpath_entries = [jar_path]
-                        lwjgl_path = self.download_lwjgl()  # Download LWJGL
+                        classpath_entries = [jar_path]  # Add Minecraft JAR to classpath
 
                         for library in libraries:
                             if 'downloads' in library:
@@ -150,27 +161,18 @@ class MinecraftLauncher:
                                     self.download_file(artifact['url'], artifact_path, artifact['path'].split('/')[-1])
                                     classpath_entries.append(artifact_path)
 
-                                if 'classifiers' in library:
-                                    natives = library['downloads']['classifiers']
-                                    if 'natives-windows' in natives:
-                                        native = natives['natives-windows']
-                                        native_path = os.path.join(libraries_path, *native['path'].split('/'))
-                                        self.download_file(native['url'], native_path, native['path'].split('/')[-1])
-                                        if not os.path.exists(natives_path):
-                                            os.makedirs(natives_path)
-                                        with zipfile.ZipFile(native_path, 'r') as zip_ref:
-                                            zip_ref.extractall(natives_path)
-
                         # Save classpath entries to a file
                         classpath_file = os.path.join(version_dir, "classpath.txt")
                         with open(classpath_file, 'w') as f:
                             f.write(';'.join(classpath_entries))
 
-                        return version_details, lwjgl_path
+                        logging.info(f"Generated classpath for version {version_id}: {classpath_entries}")
+
+                        return version_details
                     except Exception as e:
                         logging.error(f"Failed to download Minecraft version {version_id}: {e}")
                         messagebox.showerror("Error", f"Failed to download Minecraft version {version_id}: {e}")
-        return None, None
+        return None
 
     # Display Minecraft versions
     def display_versions(self):
@@ -190,7 +192,7 @@ class MinecraftLauncher:
 
         self.progress_label.config(text="")  # Reset progress label
         self.progress_bar['value'] = 0  # Reset progress bar value
-        version_details, lwjgl_path = self.download_version(selected_version)
+        version_details = self.download_version(selected_version)
         if not version_details:
             messagebox.showerror("Error", f"Failed to download Minecraft version {selected_version}.")
             return
@@ -202,10 +204,7 @@ class MinecraftLauncher:
             messagebox.showerror("Error", f"Minecraft version {selected_version} not found.")
             return
 
-        version_dir = os.path.join(mc_directory, "versions", selected_version)
-        classpath_file = os.path.join(version_dir, "classpath.txt")
-
-        main_class = "net.minecraft.client.main.Main"  # Main class for Minecraft
+        main_class = version_details['mainClass']  # Get main class from version details
 
         # Placeholder values for required arguments
         access_token = "token"
@@ -213,22 +212,44 @@ class MinecraftLauncher:
         uuid = "uuid"
 
         # Set java.library.path to include LWJGL natives directory
-        if lwjgl_path:
-            lwjgl_native_path = os.path.join(lwjgl_path, "native")
-            java_library_path = os.pathsep.join([os.environ.get('JAVA_LIBRARY_PATH', ''), lwjgl_native_path])
-        else:
-            java_library_path = os.environ.get('JAVA_LIBRARY_PATH', '')
+        lwjgl_natives_dir = self.download_lwjgl()  # LWJGL natives directory
+        if not lwjgl_natives_dir:
+            return
 
+        java_library_path = lwjgl_natives_dir  # Directly use natives_dir
+
+        # Print the java.library.path for debugging
+        print(f"java.library.path: {java_library_path}")
+        logging.info(f"java.library.path: {java_library_path}")
+
+        # Construct the classpath including Minecraft JAR and dependencies
+        classpath = [mc_jar]
+        libraries = version_details.get('libraries', [])
+        for library in libraries:
+            if 'downloads' in library:
+                artifact = library['downloads'].get('artifact', {})
+                if 'path' in artifact and 'url' in artifact:
+                    artifact_path = os.path.join(mc_directory, "libraries", *artifact['path'].split('/'))
+                    classpath.append(artifact_path)
+
+        # Construct the command to launch Minecraft
         command = [
-            'java', f'-Djava.library.path={java_library_path}', '-cp', f'@{classpath_file}', main_class,
+            'java', '-Djava.library.path=' + java_library_path, '-cp', os.pathsep.join(classpath), main_class,
             '--accessToken', access_token,
             '--version', selected_version,
             '--username', username,
             '--uuid', uuid
         ]
 
+        # Log the command for debugging
+        logging.info(f"Executing command: {' '.join(command)}")
+        print(f"Executing command: {' '.join(command)}")
+
         try:
-            subprocess.run(command)
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError as e:
+            logging.error(f"Failed to launch Minecraft: {e}")
+            messagebox.showerror("Error", f"Failed to launch Minecraft: {e}")
         except Exception as e:
             logging.error(f"Failed to launch Minecraft: {e}")
             messagebox.showerror("Error", f"Failed to launch Minecraft: {e}")
