@@ -115,17 +115,24 @@ class MinecraftLauncher:
             logging.info(f"LWJGL already extracted at {lwjgl_path}")
             print(f"LWJGL already extracted at {lwjgl_path}")  # Print the existing path
 
-        # Correct path for native libraries
-        natives_dir = os.path.join(lwjgl_path, "lwjgl-2.9.3", "native", "windows")
+        # Check if the native libraries directory exists
+        natives_dir = os.path.join(lwjgl_path, "native", "windows")  # Adjust the path according to your LWJGL folder structure
+        if not os.path.exists(natives_dir):
+            logging.error(f"LWJGL native libraries directory not found at {natives_dir}")
+            messagebox.showerror("Error", f"LWJGL native libraries directory not found at {natives_dir}")
+            return None
+
+        # Check if expected files exist in the natives directory
         expected_files = ['lwjgl.dll', 'lwjgl64.dll']
-        for file in expected_files:
-            if not os.path.exists(os.path.join(natives_dir, file)):
-                logging.error(f"Missing LWJGL native library: {file}")
-                messagebox.showerror("Error", f"Missing LWJGL native library: {file}")
-                return None
+        missing_files = [file for file in expected_files if not os.path.exists(os.path.join(natives_dir, file))]
+
+        if missing_files:
+            logging.error(f"Missing LWJGL native libraries: {', '.join(missing_files)}")
+            messagebox.showerror("Error", f"Missing LWJGL native libraries: {', '.join(missing_files)}")
+            return None
 
         return natives_dir  # Return the natives directory directly
-
+        
     def download_version(self, version_id):
         versions_data = self.fetch_versions()
         if versions_data:
